@@ -13,7 +13,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// دروستکردنی فۆڵدەرە پێویستەکان
 const uploadsDir = path.join(__dirname, 'uploads');
 const publicDir = path.join(__dirname, 'public');
 const plistDir = path.join(publicDir, 'plist');
@@ -24,32 +23,48 @@ const plistDir = path.join(publicDir, 'plist');
     }
 });
 
-// ڕێگەپێدان بە داگرتنی فایلەکانی ناو public
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.ipa')) {
+            res.setHeader('Content-Type', 'application/octet-stream');
+        } else if (filePath.endsWith('.plist')) {
+            res.setHeader('Content-Type', 'text/xml');
+        }
+    }
+}));
 
-// سنووری بارکردنی فایل (200MB)
 const upload = multer({
     dest: uploadsDir,
-    limits: { fileSize: 200 * 1024 * 1024 }
+    limits: { fileSize: 250 * 1024 * 1024 }
 });
 
-// ئاراستەی باینەری zsign لە تەنیشت server.js
 const localZsign = path.join(__dirname, 'zsign');
 
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
     { name: 'p12', maxCount: 1 },
-    { name: 'provision', maxCount: 1 }
+    { name: 'provision', maxCount: 1 },
+    { name: 'dylib', maxCount: 5 }
 ]), (req, res) => {
     try {
-        if (!req.files || !req.files['ipa'] || !req.files['p12'] || !req.files['provision']) {
-            return res.status(400).json({ success: false, error: 'All files (IPA, P12, Provision) are required.' });
+        if (!req.files || !req.files['ipa']) {
+            return res.status(400).json({ success: false, error: 'IPA file is required.' });
         }
 
         const ipaPath = req.files['ipa'][0].path;
-        const p12Path = req.files['p12'][0].path;
-        const provPath = req.files['provision'][0].path;
+        const p12Path = req.files['p12'] ? req.files['p12'][0].path : null;
+        const provPath = req.files['provision'] ? req.files['provision'][0].path : null;
         const password = req.body.password || '';
+
+        // وەرگرتنی هەڵبژاردە پێشکەوتووەکان لە فۆڕمەکەوە
+        const appName = req.body.appName || '';
+        const bundleId = req.body.bundleId || '';
+        const appVersion = req.body.appVersion || '';
+        
+        const noSignature = req.body.noSignature === 'true';
+        const removeProvision = req.body.removeProvision === 'true';
+        const removePlugins = req.body.removePlugins === 'true';
+        const removeWatch = req.body.removeWatch === 'true';
 
         const timestamp = Date.now();
         const signedIpaName = `signed_${timestamp}.ipa`;
@@ -57,46 +72,68 @@ app.post('/api/sign', upload.fields([
         const plistName = `manifest_${timestamp}.plist`;
         const plistPath = path.join(plistDir, plistName);
 
-        // دڵنیابوون لەوەی باینەرییە لۆکاڵییەکە دەسەڵاتی جێبەجێکردنی هەیە
         let execCmd = 'zsign';
         if (fs.existsSync(localZsign)) {
-            try {
-                fs.chmodSync(localZsign, 0o755);
-            } catch (permErr) {
-                console.warn('Failed to set execute permissions:', permErr.message);
-            }
+            try { fs.chmodSync(localZsign, 0o755); } catch (_) {}
             execCmd = `"${localZsign}"`;
         }
 
-        // فەرمانی واژۆکردن
-        const cmd = `${execCmd} -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
+        // بنیاتنانی فەرمانی zsign بە شێوازی داینامیکی
+        let cmdArgs = [];
 
-        exec(cmd, (error, stdout, stderr) => {
-            // سڕینەوەی فایلە خاوەکان بۆ پاراستنی بیرگەی سێرڤەر
+        if (!noSignature && p12Path && provPath) {
+            cmdArgs.push(`-k "${p12Path}"`);
+            cmdArgs.push(`-p "${password}"`);
+            cmdArgs.push(`-m "${provPath}"`);
+        }
+
+        if (appName) cmdArgs.push(`-n "${appName}"`);
+        if (bundleId) cmdArgs.push(`-b "${bundleId}"`);
+        if (appVersion) cmdArgs.push(`-r "${appVersion}"`);
+
+        // زیادکردنی Tweak / Dylib
+        if (req.files['dylib']) {
+            req.files['dylib'].forEach(file => {
+                cmdArgs.push(`-l "${file.path}"`);
+            });
+        }
+
+        // سڕینەوەی کاتی مۆبایل پرۆڤیشن یان درێژکراوەکان
+        if (removeProvision) cmdArgs.push(`--rm-prov`);
+        if (removePlugins) cmdArgs.push(`--rm-plugins`);
+        if (removeWatch) cmdArgs.push(`--rm-watch`);
+
+        cmdArgs.push(`-o "${signedIpaPath}"`);
+        cmdArgs.push(`"${ipaPath}"`);
+
+        const fullCmd = `${execCmd} ${cmdArgs.join(' ')}`;
+
+        exec(fullCmd, (error, stdout, stderr) => {
+            // سڕینەوەی فایلە خاوەکان
             try {
                 if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
-                if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
-                if (fs.existsSync(provPath)) fs.unlinkSync(provPath);
-            } catch (cleanupErr) {
-                console.warn('Cleanup warning:', cleanupErr.message);
-            }
+                if (p12Path && fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
+                if (provPath && fs.existsSync(provPath)) fs.unlinkSync(provPath);
+                if (req.files['dylib']) {
+                    req.files['dylib'].forEach(f => {
+                        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+                    });
+                }
+            } catch (_) {}
 
             if (error) {
-                console.error('zsign execution error:', stderr || stdout);
+                console.error('zsign error:', stderr || stdout);
                 return res.status(500).json({
                     success: false,
-                    error: stderr || stdout || 'Codesigning failed. Check password or provisioning profile.'
+                    error: stderr || stdout || 'Signing failed. Invalid parameters or certificate.'
                 });
             }
 
-            // ناونیشانی سێرڤەر بۆ دروستکردنی بەستەری ڕاستەوخۆ
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
             const host = req.get('host');
-            const baseUrl = `${protocol}://${host}`;
-
+            const baseUrl = `https://${host}`;
             const ipaDownloadUrl = `${baseUrl}/${signedIpaName}`;
+            const finalBundleId = bundleId || '*';
 
-            // دروستکردنی فایلی فەرمی manifest.plist بۆ ئەپڵ
             const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -124,13 +161,13 @@ app.post('/api/sign', upload.fields([
             <key>metadata</key>
             <dict>
                 <key>bundle-identifier</key>
-                <string>app.ifalcon.signed.${timestamp}</string>
+                <string>${finalBundleId}</string>
                 <key>bundle-version</key>
-                <string>1.0.0</string>
+                <string>${appVersion || '1.0.0'}</string>
                 <key>kind</key>
                 <string>software</string>
                 <key>title</key>
-                <string>iFalcon Signed App</string>
+                <string>${appName || 'iFalcon Signed App'}</string>
             </dict>
         </dict>
     </array>
@@ -140,7 +177,7 @@ app.post('/api/sign', upload.fields([
             fs.writeFileSync(plistPath, plistContent);
 
             const manifestUrl = `${baseUrl}/plist/${plistName}`;
-            const itmsUrl = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`;
+            const itmsUrl = `itms-services://?action=download-manifest&url=${manifestUrl}`;
 
             return res.json({
                 success: true,
@@ -151,17 +188,13 @@ app.post('/api/sign', upload.fields([
         });
 
     } catch (err) {
-        console.error('Server request exception:', err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// پشکنینی کارکردنی سێرڤەر
 app.get('/health', (req, res) => {
-    res.json({ status: 'active', engine: 'zsign', maxUpload: '200MB' });
+    res.json({ status: 'active', engine: 'zsign-pro' });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`iFalcon Signer Backend running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
