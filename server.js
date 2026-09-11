@@ -23,6 +23,7 @@ const plistDir = path.join(publicDir, 'plist');
     }
 });
 
+// ڕێکخستنی Headerی گونجاو بەپێی ستانداردەکانی OTAی ئەپڵ
 app.use(express.static(publicDir, {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.ipa')) {
@@ -33,9 +34,10 @@ app.use(express.static(publicDir, {
     }
 }));
 
+// بەرزکردنەوەی سنووری بارکردن بۆ 500 مێگابایت
 const upload = multer({
     dest: uploadsDir,
-    limits: { fileSize: 250 * 1024 * 1024 }
+    limits: { fileSize: 500 * 1024 * 1024 }
 });
 
 const localZsign = path.join(__dirname, 'zsign');
@@ -44,7 +46,7 @@ app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
     { name: 'p12', maxCount: 1 },
     { name: 'provision', maxCount: 1 },
-    { name: 'dylib', maxCount: 5 }
+    { name: 'dylib', maxCount: 10 }
 ]), (req, res) => {
     try {
         if (!req.files || !req.files['ipa']) {
@@ -56,15 +58,22 @@ app.post('/api/sign', upload.fields([
         const provPath = req.files['provision'] ? req.files['provision'][0].path : null;
         const password = req.body.password || '';
 
-        // وەرگرتنی هەڵبژاردە پێشکەوتووەکان لە فۆڕمەکەوە
+        // زانیارییە سەرەکییەکان
         const appName = req.body.appName || '';
         const bundleId = req.body.bundleId || '';
         const appVersion = req.body.appVersion || '';
-        
+
+        // هەڵبژاردە پێشکەوتووەکانی ناو وێنەکە (Toggles)
         const noSignature = req.body.noSignature === 'true';
         const removeProvision = req.body.removeProvision === 'true';
         const removePlugins = req.body.removePlugins === 'true';
         const removeWatch = req.body.removeWatch === 'true';
+        const minOSVersion = req.body.minOSVersion === 'true';
+        const removeUISupported = req.body.removeUISupported === 'true';
+        const removeURLScheme = req.body.removeURLScheme === 'true';
+        const supportsDocBrowser = req.body.supportsDocBrowser === 'true';
+        const fixWhiteIcon = req.body.fixWhiteIcon === 'true';
+        const multiOpen = req.body.multiOpen === 'true';
 
         const timestamp = Date.now();
         const signedIpaName = `signed_${timestamp}.ipa`;
@@ -78,7 +87,7 @@ app.post('/api/sign', upload.fields([
             execCmd = `"${localZsign}"`;
         }
 
-        // بنیاتنانی فەرمانی zsign بە شێوازی داینامیکی
+        // دارشتنی ئارگومێنتەکانی zsign
         let cmdArgs = [];
 
         if (!noSignature && p12Path && provPath) {
@@ -88,20 +97,36 @@ app.post('/api/sign', upload.fields([
         }
 
         if (appName) cmdArgs.push(`-n "${appName}"`);
-        if (bundleId) cmdArgs.push(`-b "${bundleId}"`);
-        if (appVersion) cmdArgs.push(`-r "${appVersion}"`);
+        
+        // ئەگەر Multi-Open کارا بوو و Bundle ID دیاری نەکرابوو، خۆکارانە شوناسێکی جیاواز دادەنێت
+        if (bundleId) {
+            cmdArgs.push(`-b "${bundleId}"`);
+        } else if (multiOpen) {
+            cmdArgs.push(`-b "app.clone.${timestamp}"`);
+        }
 
-        // زیادکردنی Tweak / Dylib
+        // ڕێکخستنی وەشان
+        if (appVersion) {
+            cmdArgs.push(`-r "${appVersion}"`);
+        } else if (minOSVersion) {
+            cmdArgs.push(`--min-os "10.0"`);
+        }
+
+        // زیادکردنی تویکەکان (Dylib / Deb)
         if (req.files['dylib']) {
             req.files['dylib'].forEach(file => {
                 cmdArgs.push(`-l "${file.path}"`);
             });
         }
 
-        // سڕینەوەی کاتی مۆبایل پرۆڤیشن یان درێژکراوەکان
+        // ئارگومێنتە پێشکەوتووەکان بۆ پاککردنەوە و ڕێکخستنی فایل
         if (removeProvision) cmdArgs.push(`--rm-prov`);
         if (removePlugins) cmdArgs.push(`--rm-plugins`);
         if (removeWatch) cmdArgs.push(`--rm-watch`);
+        if (removeUISupported) cmdArgs.push(`--rm-ui-device`);
+        if (removeURLScheme) cmdArgs.push(`--rm-url-scheme`);
+        if (supportsDocBrowser) cmdArgs.push(`--doc-browser`);
+        if (fixWhiteIcon) cmdArgs.push(`--fix-icon`);
 
         cmdArgs.push(`-o "${signedIpaPath}"`);
         cmdArgs.push(`"${ipaPath}"`);
@@ -109,7 +134,7 @@ app.post('/api/sign', upload.fields([
         const fullCmd = `${execCmd} ${cmdArgs.join(' ')}`;
 
         exec(fullCmd, (error, stdout, stderr) => {
-            // سڕینەوەی فایلە خاوەکان
+            // سڕینەوەی دەستبەجێی فایلە بارکراوەکان
             try {
                 if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
                 if (p12Path && fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
@@ -132,8 +157,9 @@ app.post('/api/sign', upload.fields([
             const host = req.get('host');
             const baseUrl = `https://${host}`;
             const ipaDownloadUrl = `${baseUrl}/${signedIpaName}`;
-            const finalBundleId = bundleId || '*';
+            const finalBundleId = bundleId || (multiOpen ? `app.clone.${timestamp}` : '*');
 
+            // دروستکردنی فایلی فەرمی manifest.plist بۆ ئەپڵ
             const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -152,6 +178,14 @@ app.post('/api/sign', upload.fields([
                 <dict>
                     <key>kind</key>
                     <string>display-image</string>
+                    <key>needs-shine</key>
+                    <false/>
+                    <key>url</key>
+                    <string>https://ifalconapp.pages.dev/assets/images/icons/default.png</string>
+                </dict>
+                <dict>
+                    <key>kind</key>
+                    <string>full-size-image</string>
                     <key>needs-shine</key>
                     <false/>
                     <key>url</key>
@@ -193,7 +227,7 @@ app.post('/api/sign', upload.fields([
 });
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'active', engine: 'zsign-pro' });
+    res.json({ status: 'active', engine: 'zsign-pro', maxUpload: '500MB' });
 });
 
 const PORT = process.env.PORT || 3000;
