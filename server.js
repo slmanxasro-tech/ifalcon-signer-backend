@@ -30,11 +30,12 @@ app.use(express.static(publicDir));
 // ڕێکخستنی سنووری بارکردن (200MB)
 const upload = multer({
     dest: uploadsDir,
-    limits: { fileSize: 200 * 1024 * 1024 } // 200 Megabytes
+    limits: { fileSize: 200 * 1024 * 1024 }
 });
 
-// ڕێڕەوی تەواوی پرۆگرامی zsign
-const zsignBinary = path.join(__dirname, 'zsign');
+// ئەگەر zsign لە ناو فۆڵدەرەکە بوو ئەوە بەکاردێنێت، دەنا ناوی فەرمانە گشتییەکە (Nixpacks / System)
+const localZsign = path.join(__dirname, 'zsign');
+const zsignCmd = fs.existsSync(localZsign) ? `"${localZsign}"` : 'zsign';
 
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
@@ -57,16 +58,16 @@ app.post('/api/sign', upload.fields([
         const plistName = `manifest_${timestamp}.plist`;
         const plistPath = path.join(plistDir, plistName);
 
-        // دڵنیابوونەوە لە مۆڵەتی کارکردنی باینەری zsign
-        if (fs.existsSync(zsignBinary)) {
-            try { fs.chmodSync(zsignBinary, 0o755); } catch (_) {}
+        // دڵنیابوونەوە لە مۆڵەتی کارکردنی باینەری ئەگەر لە ناوخۆ بوو
+        if (fs.existsSync(localZsign)) {
+            try { fs.chmodSync(localZsign, 0o755); } catch (_) {}
         }
 
-        // فەرمانی واژۆکردنی IPA بە شێوازی باینەری
-        const cmd = `"${zsignBinary}" -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
+        // فەرمانی واژۆکردنی IPA
+        const cmd = `${zsignCmd} -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
 
         exec(cmd, (error, stdout, stderr) => {
-            // سڕینەوەی فایلە ئەسڵییە خاوەکان بۆ خاوێن هێشتنەوەی سێرڤەر
+            // سڕینەوەی فایلە خاوەکان
             try {
                 if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
                 if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
@@ -83,7 +84,7 @@ app.post('/api/sign', upload.fields([
                 });
             }
 
-            // ناونیشانی سێرڤەر بە شێوازی داینامیکی بە HTTPS
+            // بەستەری تەواو بە پرۆتۆکۆڵی پارێزراو
             const protocol = req.headers['x-forwarded-proto'] || req.protocol;
             const host = req.get('host');
             const baseUrl = `${protocol}://${host}`;
@@ -150,7 +151,6 @@ app.post('/api/sign', upload.fields([
     }
 });
 
-// پشکنینی کارکردنی سێرڤەر
 app.get('/health', (req, res) => {
     res.json({ status: 'active', engine: 'zsign', maxUpload: '200MB' });
 });
