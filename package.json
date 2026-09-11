@@ -4,6 +4,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "postinstall": "curl -sL https://github.com/zhlynn/zsign/releases/download/v0.0.1/zsign_linux_x86_64 -o zsign && chmod +x zsign",
     "start": "node server.js"
   },
   "dependencies": {
