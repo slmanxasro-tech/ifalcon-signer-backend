@@ -4,50 +4,158 @@ import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import cors from 'cors';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-// دانانی سنووری تەواوی 200 مێگابایت بۆ سێرڤەر
-const upload = multer({
-    dest: 'uploads/',
-    limits: { fileSize: 200 * 1024 * 1024 } 
+// دروستکردنی فۆڵدەرە پێویستەکان ئەگەر بوونیان نەبێت
+const uploadsDir = path.join(__dirname, 'uploads');
+const publicDir = path.join(__dirname, 'public');
+const plistDir = path.join(publicDir, 'plist');
+
+[uploadsDir, publicDir, plistDir].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
 });
+
+// ڕێگەپێدان بە دەستگەیشتن بە فایلەکانی ناو public (IPA و Plist)
+app.use(express.static(publicDir));
+
+// ڕێکخستنی سنووری بارکردن (200MB)
+const upload = multer({
+    dest: uploadsDir,
+    limits: { fileSize: 200 * 1024 * 1024 } // 200 Megabytes
+});
+
+// ڕێڕەوی تەواوی پرۆگرامی zsign
+const zsignBinary = path.join(__dirname, 'zsign');
 
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
     { name: 'p12', maxCount: 1 },
     { name: 'provision', maxCount: 1 }
 ]), (req, res) => {
-    const ipa = req.files['ipa'][0].path;
-    const p12 = req.files['p12'][0].path;
-    const prov = req.files['provision'][0].path;
-    const pass = req.body.password || '';
-
-    const signedName = `signed_${Date.now()}.ipa`;
-    const outputPath = path.join('public', signedName);
-
-    // فەرمانی واژۆکردنی zsign
-    const cmd = `zsign -k "${p12}" -p "${pass}" -m "${prov}" -o "${outputPath}" "${ipa}"`;
-
-    exec(cmd, (err, stdout, stderr) => {
-        // سڕینەوەی فایلە هەڵبژێردراوەکانی بەکارهێنەر بۆ ئەوەی جێگا نەگرێت
-        fs.unlinkSync(ipa);
-        fs.unlinkSync(p12);
-        fs.unlinkSync(prov);
-
-        if (err) {
-            return res.status(500).json({ success: false, error: stderr });
+    try {
+        if (!req.files || !req.files['ipa'] || !req.files['p12'] || !req.files['provision']) {
+            return res.status(400).json({ success: false, error: 'All files (IPA, P12, Provision) are required.' });
         }
 
-        const domain = `https://${req.get('host')}`;
-        const plistUrl = `${domain}/plist/${signedName}.plist`;
+        const ipaPath = req.files['ipa'][0].path;
+        const p12Path = req.files['p12'][0].path;
+        const provPath = req.files['provision'][0].path;
+        const password = req.body.password || '';
 
-        res.json({
-            success: true,
-            installUrl: `itms-services://?action=download-manifest&url=${encodeURIComponent(plistUrl)}`
+        const timestamp = Date.now();
+        const signedIpaName = `signed_${timestamp}.ipa`;
+        const signedIpaPath = path.join(publicDir, signedIpaName);
+        const plistName = `manifest_${timestamp}.plist`;
+        const plistPath = path.join(plistDir, plistName);
+
+        // دڵنیابوونەوە لە مۆڵەتی کارکردنی باینەری zsign
+        if (fs.existsSync(zsignBinary)) {
+            try { fs.chmodSync(zsignBinary, 0o755); } catch (_) {}
+        }
+
+        // فەرمانی واژۆکردنی IPA بە شێوازی باینەری
+        const cmd = `"${zsignBinary}" -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
+
+        exec(cmd, (error, stdout, stderr) => {
+            // سڕینەوەی فایلە ئەسڵییە خاوەکان بۆ خاوێن هێشتنەوەی سێرڤەر
+            try {
+                if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
+                if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
+                if (fs.existsSync(provPath)) fs.unlinkSync(provPath);
+            } catch (cleanupErr) {
+                console.warn('Cleanup warning:', cleanupErr.message);
+            }
+
+            if (error) {
+                console.error('zsign execution error:', stderr || stdout);
+                return res.status(500).json({
+                    success: false,
+                    error: stderr || stdout || 'Codesigning failed. Check password or provisioning profile.'
+                });
+            }
+
+            // ناونیشانی سێرڤەر بە شێوازی داینامیکی بە HTTPS
+            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+            const host = req.get('host');
+            const baseUrl = `${protocol}://${host}`;
+
+            const ipaDownloadUrl = `${baseUrl}/${signedIpaName}`;
+
+            // دروستکردنی فایلی فەرمی manifest.plist بۆ ئەپڵ
+            const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>assets</key>
+            <array>
+                <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>${ipaDownloadUrl}</string>
+                </dict>
+                <dict>
+                    <key>kind</key>
+                    <string>display-image</string>
+                    <key>needs-shine</key>
+                    <false/>
+                    <key>url</key>
+                    <string>https://ifalconapp.pages.dev/assets/images/icons/default.png</string>
+                </dict>
+            </array>
+            <key>metadata</key>
+            <dict>
+                <key>bundle-identifier</key>
+                <string>app.ifalcon.signed.${timestamp}</string>
+                <key>bundle-version</key>
+                <string>1.0.0</string>
+                <key>kind</key>
+                <string>software</string>
+                <key>title</key>
+                <string>iFalcon Signed App</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>`;
+
+            fs.writeFileSync(plistPath, plistContent);
+
+            const manifestUrl = `${baseUrl}/plist/${plistName}`;
+            const itmsUrl = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`;
+
+            return res.json({
+                success: true,
+                downloadUrl: ipaDownloadUrl,
+                manifestUrl: manifestUrl,
+                installUrl: itmsUrl
+            });
         });
-    });
+
+    } catch (err) {
+        console.error('Server request exception:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
 });
 
-app.listen(process.env.PORT || 3000);
+// پشکنینی کارکردنی سێرڤەر
+app.get('/health', (req, res) => {
+    res.json({ status: 'active', engine: 'zsign', maxUpload: '200MB' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`iFalcon Signer Backend running on port ${PORT}`);
+});
