@@ -33,6 +33,9 @@ const upload = multer({
     limits: { fileSize: 200 * 1024 * 1024 }
 });
 
+// ئاراستەی باینەری zsign لە تەنیشت server.js
+const localZsign = path.join(__dirname, 'zsign');
+
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
     { name: 'p12', maxCount: 1 },
@@ -54,11 +57,22 @@ app.post('/api/sign', upload.fields([
         const plistName = `manifest_${timestamp}.plist`;
         const plistPath = path.join(plistDir, plistName);
 
-        // فەرمانی واژۆکردن لە ڕێگەی zsignـی دامەزراو لە سیستەم
-        const cmd = `zsign -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
+        // دڵنیابوون لەوەی باینەرییە لۆکاڵییەکە دەسەڵاتی جێبەجێکردنی هەیە
+        let execCmd = 'zsign';
+        if (fs.existsSync(localZsign)) {
+            try {
+                fs.chmodSync(localZsign, 0o755);
+            } catch (permErr) {
+                console.warn('Failed to set execute permissions:', permErr.message);
+            }
+            execCmd = `"${localZsign}"`;
+        }
+
+        // فەرمانی واژۆکردن
+        const cmd = `${execCmd} -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
 
         exec(cmd, (error, stdout, stderr) => {
-            // سڕینەوەی فایلە بارکراوە کاتییەکان
+            // سڕینەوەی فایلە خاوەکان بۆ پاراستنی بیرگەی سێرڤەر
             try {
                 if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
                 if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
@@ -75,6 +89,7 @@ app.post('/api/sign', upload.fields([
                 });
             }
 
+            // ناونیشانی سێرڤەر بۆ دروستکردنی بەستەری ڕاستەوخۆ
             const protocol = req.headers['x-forwarded-proto'] || req.protocol;
             const host = req.get('host');
             const baseUrl = `${protocol}://${host}`;
