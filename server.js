@@ -13,7 +13,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// دروستکردنی فۆڵدەرە پێویستەکان ئەگەر بوونیان نەبێت
+// دروستکردنی فۆڵدەرە پێویستەکان
 const uploadsDir = path.join(__dirname, 'uploads');
 const publicDir = path.join(__dirname, 'public');
 const plistDir = path.join(publicDir, 'plist');
@@ -24,18 +24,14 @@ const plistDir = path.join(publicDir, 'plist');
     }
 });
 
-// ڕێگەپێدان بە دەستگەیشتن بە فایلەکانی ناو public (IPA و Plist)
+// ڕێگەپێدان بە داگرتنی فایلەکانی ناو public
 app.use(express.static(publicDir));
 
-// ڕێکخستنی سنووری بارکردن (200MB)
+// سنووری بارکردنی فایل (200MB)
 const upload = multer({
     dest: uploadsDir,
     limits: { fileSize: 200 * 1024 * 1024 }
 });
-
-// ئەگەر zsign لە ناو فۆڵدەرەکە بوو ئەوە بەکاردێنێت، دەنا ناوی فەرمانە گشتییەکە (Nixpacks / System)
-const localZsign = path.join(__dirname, 'zsign');
-const zsignCmd = fs.existsSync(localZsign) ? `"${localZsign}"` : 'zsign';
 
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
@@ -58,16 +54,11 @@ app.post('/api/sign', upload.fields([
         const plistName = `manifest_${timestamp}.plist`;
         const plistPath = path.join(plistDir, plistName);
 
-        // دڵنیابوونەوە لە مۆڵەتی کارکردنی باینەری ئەگەر لە ناوخۆ بوو
-        if (fs.existsSync(localZsign)) {
-            try { fs.chmodSync(localZsign, 0o755); } catch (_) {}
-        }
-
-        // فەرمانی واژۆکردنی IPA
-        const cmd = `${zsignCmd} -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
+        // فەرمانی واژۆکردن لە ڕێگەی zsignـی دامەزراو لە سیستەم
+        const cmd = `zsign -k "${p12Path}" -p "${password}" -m "${provPath}" -o "${signedIpaPath}" "${ipaPath}"`;
 
         exec(cmd, (error, stdout, stderr) => {
-            // سڕینەوەی فایلە خاوەکان
+            // سڕینەوەی فایلە بارکراوە کاتییەکان
             try {
                 if (fs.existsSync(ipaPath)) fs.unlinkSync(ipaPath);
                 if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
@@ -84,7 +75,6 @@ app.post('/api/sign', upload.fields([
                 });
             }
 
-            // بەستەری تەواو بە پرۆتۆکۆڵی پارێزراو
             const protocol = req.headers['x-forwarded-proto'] || req.protocol;
             const host = req.get('host');
             const baseUrl = `${protocol}://${host}`;
@@ -151,6 +141,7 @@ app.post('/api/sign', upload.fields([
     }
 });
 
+// پشکنینی کارکردنی سێرڤەر
 app.get('/health', (req, res) => {
     res.json({ status: 'active', engine: 'zsign', maxUpload: '200MB' });
 });
