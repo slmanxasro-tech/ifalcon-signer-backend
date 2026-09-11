@@ -1,2 +1,10 @@
 [phases.setup]
-nixPkgs = ["...", "zsign"]
+nixPkgs = ["clang", "openssl", "git"]
+
+[phases.build]
+cmds = [
+  "git clone https://github.com/zhlynn/zsign.git /tmp/zsign",
+  "clang++ /tmp/zsign/*.cpp -lcrypto -O3 -o /usr/local/bin/zsign || clang++ /tmp/zsign/src/*.cpp -lcrypto -O3 -o /usr/local/bin/zsign",
+  "chmod +x /usr/local/bin/zsign",
+  "rm -rf /tmp/zsign"
+]
