@@ -1,25 +1,12 @@
-import express from 'express';
-import multer from 'multer';
-import { exec } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import cors from 'cors';
-import { fileURLToPath } from 'url';
-import https from 'https';
-import http from 'http';
-import AdmZip from 'adm-zip';
-
-// ڕێگری کردن لەوەی سێرڤەرەکە بە هۆی هەڵەی کاتیشەوە بڕوخێت
-process.on('uncaughtException', (err) => {
-    console.error('Uncaught Exception:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection:', promise, 'reason:', reason);
-});
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require('express');
+const multer = require('multer');
+const { exec } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const cors = require('cors');
+const https = require('https');
+const http = require('http');
+const AdmZip = require('adm-zip');
 
 const app = express();
 app.use(cors());
@@ -33,9 +20,7 @@ const plistDir = path.join(publicDir, 'plist');
     if (!fs.existsSync(dir)) {
         try {
             fs.mkdirSync(dir, { recursive: true });
-        } catch (e) {
-            console.error(`Error creating directory ${dir}:`, e);
-        }
+        } catch (e) {}
     }
 });
 
@@ -173,7 +158,6 @@ app.post('/api/sign', upload.fields([
             } catch (_) {}
 
             if (error) {
-                console.error('zsign error:', stderr || stdout);
                 return res.status(500).json({
                     success: false,
                     error: stderr || stdout || 'Signing failed.'
@@ -192,9 +176,7 @@ app.post('/api/sign', upload.fields([
                     });
                     
                     zip.writeZip(signedIpaPath);
-                } catch (e) {
-                    console.error('Error removing mobileprovision:', e);
-                }
+                } catch (e) {}
             }
 
             const host = req.get('host');
@@ -272,10 +254,10 @@ app.post('/api/sign', upload.fields([
 });
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'active', engine: 'zsign-pro', maxUpload: '500MB', urlDownload: 'supported' });
+    res.json({ status: 'active', engine: 'zsign-pro', maxUpload: '500MB' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Backend running stably on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
