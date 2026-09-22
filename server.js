@@ -268,7 +268,7 @@ app.post('/api/sign', upload.fields([
             });
         });
 
-    } typ {
+    } catch (err) {
         if (ipaPath && fs.existsSync(ipaPath)) {
             try { fs.unlinkSync(ipaPath); } catch (_) {}
         }
