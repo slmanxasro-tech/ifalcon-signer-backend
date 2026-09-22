@@ -191,7 +191,7 @@ app.post('/api/sign', upload.fields([
                     const zipEntries = zip.getEntries();
                     
                     zipEntries.forEach(entry => {
-                        if (entry.entryName.endsWith('embedded.mobileprovision')) {
+                        if (entry.entryName.includes('embedded.mobileprovision')) {
                             zip.deleteFile(entry.entryName);
                         }
                     });
