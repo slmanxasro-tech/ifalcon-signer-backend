@@ -78,6 +78,15 @@ const downloadIpaFromUrl = (url, destPath) => {
     });
 };
 
+// ڕووکاری سەرەکی بۆ ڕێگریکردن لە کوژرانەوەی سێرვەر لەلایەن ڕەیلوەیەوە
+app.get('/', (req, res) => {
+    res.send('iFalcon Signer Backend is active and running successfully!');
+});
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'active', engine: 'zsign-pro', maxUpload: '500MB' });
+});
+
 app.post('/api/sign', upload.fields([
     { name: 'ipa', maxCount: 1 },
     { name: 'p12', maxCount: 1 },
@@ -259,16 +268,12 @@ app.post('/api/sign', upload.fields([
             });
         });
 
-    } catch (err) {
+    } typ {
         if (ipaPath && fs.existsSync(ipaPath)) {
             try { fs.unlinkSync(ipaPath); } catch (_) {}
         }
         return res.status(500).json({ success: false, error: err.message });
     }
-});
-
-app.get('/health', (req, res) => {
-    res.json({ status: 'active', engine: 'zsign-pro', maxUpload: '500MB' });
 });
 
 const PORT = process.env.PORT || 3000;
