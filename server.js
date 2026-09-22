@@ -8,6 +8,15 @@ const https = require('https');
 const http = require('http');
 const AdmZip = require('adm-zip');
 
+// پاراستنی سێرვەر لە وەستان بە هۆی هەڵەی کاتییەوە
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection:', promise, 'reason:', reason);
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -20,7 +29,9 @@ const plistDir = path.join(publicDir, 'plist');
     if (!fs.existsSync(dir)) {
         try {
             fs.mkdirSync(dir, { recursive: true });
-        } catch (e) {}
+        } catch (e) {
+            console.error(`Error creating directory ${dir}:`, e);
+        }
     }
 });
 
@@ -158,6 +169,7 @@ app.post('/api/sign', upload.fields([
             } catch (_) {}
 
             if (error) {
+                console.error('zsign error:', stderr || stdout);
                 return res.status(500).json({
                     success: false,
                     error: stderr || stdout || 'Signing failed.'
@@ -176,7 +188,9 @@ app.post('/api/sign', upload.fields([
                     });
                     
                     zip.writeZip(signedIpaPath);
-                } catch (e) {}
+                } catch (e) {
+                    console.error('Error removing mobileprovision:', e);
+                }
             }
 
             const host = req.get('host');
@@ -259,5 +273,5 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Backend server successfully running on port ${PORT}`);
 });
