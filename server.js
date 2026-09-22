@@ -144,6 +144,11 @@ app.post('/api/sign', upload.fields([
             cmdArgs.push(`-m "${provPath}"`);
         }
 
+        // بەکارهێنانی فەرمی -R بۆ سڕینەوەی پروڤایژن بە بێ تێکدانی واژۆی ئەپەکە
+        if (removeProvision) {
+            cmdArgs.push('-R');
+        }
+
         if (appName) cmdArgs.push(`-n "${appName}"`);
 
         if (bundleId) {
@@ -183,23 +188,6 @@ app.post('/api/sign', upload.fields([
                     success: false,
                     error: stderr || stdout || 'Signing failed.'
                 });
-            }
-
-            if (removeProvision && fs.existsSync(signedIpaPath)) {
-                try {
-                    const zip = new AdmZip(signedIpaPath);
-                    const zipEntries = zip.getEntries();
-                    
-                    zipEntries.forEach(entry => {
-                        if (entry.entryName.includes('embedded.mobileprovision')) {
-                            zip.deleteFile(entry.entryName);
-                        }
-                    });
-                    
-                    zip.writeZip(signedIpaPath);
-                } catch (e) {
-                    console.error('Error removing mobileprovision:', e);
-                }
             }
 
             const host = req.get('host');
