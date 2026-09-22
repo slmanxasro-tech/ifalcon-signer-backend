@@ -9,6 +9,15 @@ import https from 'https';
 import http from 'http';
 import AdmZip from 'adm-zip';
 
+// ڕێگری کردن لەوەی سێرڤەرەکە بە هۆی هەڵەی کاتیشەوە بڕوخێت
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection:', promise, 'reason:', reason);
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -22,7 +31,11 @@ const plistDir = path.join(publicDir, 'plist');
 
 [uploadsDir, publicDir, plistDir].forEach(dir => {
     if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {
+            console.error(`Error creating directory ${dir}:`, e);
+        }
     }
 });
 
@@ -263,4 +276,6 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Backend running stably on port ${PORT}`);
+});
